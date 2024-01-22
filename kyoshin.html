@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Yahoo Real-time Seismic Intensity Map</title>
+    <link href="https://cdn.jsdelivr.net/npm/maplibre-gl/dist/maplibre-gl.css" rel="stylesheet" />
+    <style>
+        body { margin: 0; padding: 0; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <script src="https://cdn.jsdelivr.net/npm/maplibre-gl/dist/maplibre-gl.js"></script>
+    <script>
+        // MapLibre GL JSの初期設定
+        var map = new maplibregl.Map({
+            container: 'map', // コンテナ要素のID
+            style: {
+                version: 8,
+                sources: {
+                    'osm-tiles': {
+                        type: 'raster',
+                        tiles: ['http://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+                        tileSize: 256,
+                    }
+                },
+                layers: [{
+                    id: 'osm-tiles-layer',
+                    type: 'raster',
+                    source: 'osm-tiles',
+                }],
+            },
+            center: [139.6917, 35.6895], // 地図の初期中心点（例：東京）
+            zoom: 5 // 初期ズームレベル
+        });
+
+        // 観測地点の位置データを取得する関数
+        async function fetchSiteList() {
+            const response = await fetch('https://weather-kyoshin.west.edge.storage-yahoo.jp/SiteList/sitelist.json');
+            return await response.json();
+        }
+
+        // GeoJSONデータを生成する関数
+        function createGeoJson(intensityData, siteList) {
+    const features = intensityData.split('').map((intensityChar, index) => {
+        const intensityValue = intensityChar.charCodeAt(0) - 100;
+        const site = siteList.items[index]; // 観測地点のデータを取得
+        if (site && site.length === 2) {
+            return {
+                type: 'Feature',
+                properties: {
+                    intensity: intensityValue,
+                },
+                geometry: {
+                    type: 'Point',
+                    coordinates: [site[1], site[0]] // 経度, 緯度
+                }
+            };
+        }
+    }).filter(feature => feature != null);
+
+    return {
+        type: 'FeatureCollection',
+        features: features
+    };
+}
+
+
+        // 震度データを取得しマップ上に描画する関数
+        async function updateSeismicIntensity(siteList) {
+            // 現在の日時から1秒前の時刻を取得
+            const oneSecondAgo = new Date(new Date().getTime() - 1000);
+            const year = oneSecondAgo.getFullYear();
+            const month = ('0' + (oneSecondAgo.getMonth() + 1)).slice(-2);
+            const day = ('0' + oneSecondAgo.getDate()).slice(-2);
+            const hour = ('0' + oneSecondAgo.getHours()).slice(-2);
+            const minute = ('0' + oneSecondAgo.getMinutes()).slice(-2);
+            const second = ('0' + oneSecondAgo.getSeconds()).slice(-2);
+
+            // 震度データのURLを構築
+            const url = `https://weather-kyoshin.west.edge.storage-yahoo.jp/RealTimeData/${year}${month}${day}/${year}${month}${day}${hour}${minute}${second}.json`;
+
+            // 震度データを取得
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+                console.log(data)
+
+                // GeoJSONデータを生成
+                const geojsonData = createGeoJson(data.realTimeData.intensity, siteList);
+                console.log(geojsonData)
+
+                // マップ上にサークルレイヤーを追加（存在しない場合のみ）
+                if (!map.getLayer('intensityLayer')) {
+                    map.addLayer({
+                        id: 'intensityLayer',
+                        type: 'circle',
+                        source: {
+                            type: 'geojson',
+                            data: geojsonData
+                        },
+                        paint: {
+                            // サークルのスタイルを定義
+                            'circle-radius': 3,
+                            'circle-color': [
+                                'match',
+                                ['get', 'intensity'],
+                                0, '#97b7cc',
+                                1, '#90b3ca',
+                                2, '#89afc8',
+                                3, '#71a2cb',
+                                4, '#5ea7ac',
+                                5, '#38a477',
+                                6, '#0fb02b',
+                                7, '#f4e200',
+                                8, '#fbc300',
+                                9, '#ffaf00',
+                                10, '#ffcc00',
+                                11, '#ff7e00',
+                                12, '#ff6200',
+                                13, '#fc4c02',
+                                14, '#f53605',
+                                15, '#f11520',
+                                16, '#ed0047',
+                                17, '#e30071',
+                                18, '#dc009c',
+                                19, '#c900ba',
+                                20, '#b600d7',
+                                'rgba(255,255,255,0.5)'
+                            ]
+                        }
+                    });
+                } else {
+                    // 既存のレイヤーのデータを更新
+                    map.getSource('intensityLayer').setData(geojsonData);
+                }
+            } catch (error) {
+                console.error('Error fetching seismic intensity data:', error);
+            }
+        }
+
+        // マップが読み込まれたら震度データをリアルタイムに更新
+        map.on('load', async function () {
+            const siteList = await fetchSiteList();
+            setInterval(() => updateSeismicIntensity(siteList), 2000); // 2秒ごとに更新
+        });
+    </script>
+</body>
+</html>
